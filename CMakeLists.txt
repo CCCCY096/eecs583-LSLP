@@ -1,10 +1,12 @@
 cmake_minimum_required(VERSION 3.4.3)
 
-if(NOT DEFINED ENV{LLVM_HOME})
-    message(FATAL_ERROR "$LLVM_HOME is not defined")
-else ()
-    set(ENV{LLVM_DIR} $ENV{LLVM_HOME}/lib/cmake/llvm)
-endif()
+if(APPLE)
+    if(NOT DEFINED ENV{LLVM_HOME})
+        message(FATAL_ERROR "$LLVM_HOME is not defined")
+    else ()
+        set(ENV{LLVM_DIR} $ENV{LLVM_HOME}/lib/cmake/llvm)
+    endif()
+endif(APPLE)
 
 find_package(LLVM 8.0.1 EXACT CONFIG)                        # This will find the shared LLVM build.
 
