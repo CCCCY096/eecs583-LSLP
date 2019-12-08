@@ -17,7 +17,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "LSLPVectorizer.h"
+#include "llvm/Transforms/Vectorize/SLPVectorizer.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -86,6 +86,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Vectorize.h"
+#include <iostream>
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -101,27 +102,29 @@ using namespace llvm;
 using namespace llvm::PatternMatch;
 using namespace slpvectorizer;
 
-#define SV_NAME "slp-vectorizer"
+using std::cout; using std::endl;
+
+#define SV_NAME "lslp-vectorizer"
 #define DEBUG_TYPE "SLP"
 
 STATISTIC(NumVectorInstructions, "Number of vector instructions generated");
 
 static cl::opt<int>
-    SLPCostThreshold("slp-threshold", cl::init(0), cl::Hidden,
+    SLPCostThreshold("lslp-threshold", cl::init(0), cl::Hidden,
                      cl::desc("Only vectorize if you gain more than this "
                               "number "));
 
 static cl::opt<bool>
-ShouldVectorizeHor("slp-vectorize-hor", cl::init(true), cl::Hidden,
+ShouldVectorizeHor("lslp-vectorize-hor", cl::init(true), cl::Hidden,
                    cl::desc("Attempt to vectorize horizontal reductions"));
 
 static cl::opt<bool> ShouldStartVectorizeHorAtStore(
-    "slp-vectorize-hor-store", cl::init(false), cl::Hidden,
+    "lslp-vectorize-hor-store", cl::init(false), cl::Hidden,
     cl::desc(
         "Attempt to vectorize horizontal reductions feeding into a store"));
 
 static cl::opt<int>
-MaxVectorRegSizeOption("slp-max-reg-size", cl::init(128), cl::Hidden,
+MaxVectorRegSizeOption("lslp-max-reg-size", cl::init(128), cl::Hidden,
     cl::desc("Attempt to vectorize for this register size in bits"));
 
 /// Limits the size of scheduling regions in a block.
@@ -129,23 +132,23 @@ MaxVectorRegSizeOption("slp-max-reg-size", cl::init(128), cl::Hidden,
 /// instructions are spread over a wide range.
 /// This limit is way higher than needed by real-world functions.
 static cl::opt<int>
-ScheduleRegionSizeBudget("slp-schedule-budget", cl::init(100000), cl::Hidden,
+ScheduleRegionSizeBudget("lslp-schedule-budget", cl::init(100000), cl::Hidden,
     cl::desc("Limit the size of the SLP scheduling region per block"));
 
 static cl::opt<int> MinVectorRegSizeOption(
-    "slp-min-reg-size", cl::init(128), cl::Hidden,
+    "lslp-min-reg-size", cl::init(128), cl::Hidden,
     cl::desc("Attempt to vectorize for this register size in bits"));
 
 static cl::opt<unsigned> RecursionMaxDepth(
-    "slp-recursion-max-depth", cl::init(12), cl::Hidden,
+    "lslp-recursion-max-depth", cl::init(12), cl::Hidden,
     cl::desc("Limit the recursion depth when building a vectorizable tree"));
 
 static cl::opt<unsigned> MinTreeSize(
-    "slp-min-tree-size", cl::init(3), cl::Hidden,
+    "lslp-min-tree-size", cl::init(3), cl::Hidden,
     cl::desc("Only vectorize small trees if they are fully vectorizable"));
 
 static cl::opt<bool>
-    ViewSLPTree("view-slp-tree", cl::Hidden,
+    ViewSLPTree("view-lslp-tree", cl::Hidden,
                 cl::desc("Display the SLP trees with Graphviz"));
 
 // Limit the number of alias checks. The limit is chosen so that
@@ -488,7 +491,9 @@ public:
           const DataLayout *DL, OptimizationRemarkEmitter *ORE)
       : F(Func), SE(Se), TTI(Tti), TLI(TLi), AA(Aa), LI(Li), DT(Dt), AC(AC),
         DB(DB), DL(DL), ORE(ORE), Builder(Se->getContext()) {
-    CodeMetrics::collectEphemeralValues(F, AC, EphValues);
+    // Func->viewCFG();
+    // cout << "viewCFG" << endl;
+      CodeMetrics::collectEphemeralValues(F, AC, EphValues);
     // Use the vector register size specified by the target unless overridden
     // by a command-line option.
     // TODO: It would be better to limit the vectorization factor based on
@@ -1861,6 +1866,8 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         return;
       }
       Function *Int = CI->getCalledFunction();
+      // Int->viewCFG();
+      // cout << "viewCFG" << endl;
       Value *A1I = nullptr;
       if (hasVectorInstrinsicScalarOpd(ID, 1))
         A1I = CI->getArgOperand(1);
@@ -4536,6 +4543,8 @@ struct SLPVectorizer : public FunctionPass {
   }
 
   bool runOnFunction(Function &F) override {
+    cout << "RUNONFUNCTION." << endl;
+    // F.viewCFG();
     if (skipFunction(F))
       return false;
 
@@ -4570,6 +4579,9 @@ struct SLPVectorizer : public FunctionPass {
     AU.setPreservesCFG();
   }
 };
+
+static RegisterPass <SLPVectorizer> X("LSLPPass",
+                                      "Frequent Loop Invariant Code Motion for correctness test");
 
 } // end anonymous namespace
 
