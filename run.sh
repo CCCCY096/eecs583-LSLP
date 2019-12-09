@@ -1,37 +1,30 @@
 #!/bin/bash
 ### benchmark runner script
-### Locate this script at each benchmark directory. e.g, 583simple/run.sh
-### usage: ./run.sh ${benchmark_name} ${input}
-### e.g., ./run.sh compress compress.in   or   ./run.sh simple
+### run script project directory. 
+### usage: ./run.sh test1
 
 PATH_MYPASS=~/eecs583-LSLP/build/LSLP/LSLPPass.so  ### Action Required: Specify the path to your pass ###
 NAME_MYPASS=-LSLPPass                           ### Action Required: Specify the name for your pass ###
 BENCH=benchmarks/${1}.c
 INPUT=${2}
 
-setup(){
-  if [[ ! -z "${INPUT}" ]]; then
-    echo "INPUT:${INPUT}"
-    ln -sf input1/${INPUT} .
-  fi
-}
+
+# Disable loop vectorizer: clang -fno-vectorize file.c
+# Disable slp: clang -fno-slp-vectorize file.c
+clang -O3 -fno-vectorize -fno-slp-vectorize -emit-llvm -c ${BENCH} -o ${1}.bc
+
+opt -o ${1}.lslp.bc -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
+
+clang ${1}.bc -o ${1}_no_lslp
+clang ${1}.lslp.bc -o ${1}_lslp
 
 
-# Prepare input to run
-setup
-# Convert source code to bitcode (IR)
-# This approach has an issue with -O2, so we are going to stick with default optimization level (-O0)
-clang -O3 -emit-llvm -c ${BENCH} -o ${1}.bc
-# Instrument profiler
-opt -pgo-instr-gen -instrprof ${1}.bc -o ${1}.prof.bc
-# Generate binary executable with profiler embedded
-clang -fprofile-instr-generate ${1}.prof.bc -o ${1}.prof
-# Collect profiling data
-./${1}.prof ${INPUT}
-# Translate raw profiling data into LLVM data format
-llvm-profdata merge -output=pgo.profdata default.profraw
+echo -e "1. Performance of unoptimized code"
+time ./${1}_no_lslp > /dev/null
+echo -e "\n\n"
+echo -e "2. Performance of optimized code"
+time ./${1}_lslp > /dev/null
+echo -e "\n\n"
 
-# Prepare input to run
-setup
-# Apply your pass to bitcode (IR)
-opt -pgo-instr-use -pgo-test-profile-file=pgo.profdata -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
+# remove temp files
+rm -f default.profraw ${1}_lslp ${1}_no_lslp *.bc *_output?
