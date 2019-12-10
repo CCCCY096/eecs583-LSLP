@@ -620,6 +620,21 @@ private:
   /// This is the recursive part of buildTree.
   void buildTree_rec(ArrayRef<Value *> Roots, unsigned Depth, int);
 
+
+  void LSLPreorderOperands(SmallVector<SmallPtrSet<Value*, 16>, 16> &operandVec, SmallVector<SmallVector<Value*, 16>, 16> &finalOrder);
+
+  void LSLPgetBest(int &mode, Value* last, SmallPtrSet<Value*, 16> &candidates, Value *&best);
+
+  bool LSLPareConsecutiveOrMatch(Value *last, Value *candidate);
+
+  enum LSLPmode {
+      CONST,
+      LOAD,
+      OPCODE,
+      SPLAT,
+      FAILED
+  };
+
   /// \returns true if the ExtractElement/ExtractValue instructions in \p VL can
   /// be vectorized to use the original vector (or aggregate "bitcast" to a
   /// vector) and sets \p CurrentOrder to the identity permutation; otherwise
@@ -1397,6 +1412,125 @@ void BoUpSLP::buildTree(ArrayRef<Value *> Roots,
   }
 }
 
+
+void BoUpSLP::LSLPreorderOperands(SmallVector<SmallPtrSet<Value*, 16>, 16> &operandVec, SmallVector<SmallVector<Value*, 16>, 16> &finalOrder) {
+  if (operandVec.empty()) return;
+  unsigned int OperVecLen = operandVec[0].size();
+  SmallVector<int, 16> mode(OperVecLen);
+  int i = 0;
+  finalOrder.emplace_back();
+  for (auto curr : operandVec[0]) {
+    finalOrder[0].push_back(curr);
+    if (isa<Constant>(curr)) {
+      mode[i] = CONST;
+    } else if (isa<LoadInst>(curr)) {
+      mode[i] = LOAD;
+    } else {
+      mode[i] = OPCODE;
+    }
+  }
+
+  int laneSize = operandVec.size();
+  for (unsigned int lane = 1; lane < laneSize; ++lane) {
+    auto &candidates = operandVec[lane];
+    finalOrder.emplace_back();
+    for (unsigned int i = 0; i < OperVecLen; ++i) {
+      if (mode[i] == FAILED) continue;
+      Value *last = finalOrder[lane-1][i];
+      Value *best;
+      LSLPgetBest(mode[i], last, candidates, best);
+      finalOrder[lane].push_back(best);
+      if (i == 1 and best == last) {
+        mode[i] = SPLAT;
+      }
+    }
+  }
+
+  // some of the best are null, replace those with what left in the candidate set.
+  for (unsigned int lane = 1; lane < laneSize; ++lane) {
+    auto &candidates = operandVec[lane];
+    if (!candidates.empty()) {
+      for (unsigned int i = 0; i < OperVecLen; ++i) {
+        if (!finalOrder[lane][i]) {
+          assert(!candidates.empty() && "LSLP: All lanes should have equal length.");
+          finalOrder[lane][i] = *candidates.begin();
+          candidates.erase(finalOrder[lane][i]);
+        }
+      }
+    }
+  }
+}
+
+void BoUpSLP::LSLPgetBest(int &mode, Value* last, SmallPtrSet<Value*, 16> &candidates, Value *&best) {
+  SmallVector<Value*, 16> bestCandidates;
+  switch(mode) {
+    case CONST:
+    case LOAD:
+    case OPCODE:
+      best = *candidates.begin();
+      for (auto candidate : candidates) {
+        if (LSLPareConsecutiveOrMatch(last, candidate)) {
+          bestCandidates.push_back(candidate);
+        }
+      }
+      if (bestCandidates.size() == 0) {
+        mode = FAILED;
+        break;
+      }
+      if (bestCandidates.size() == 1) {
+        best = bestCandidates[0];
+        break;
+      }
+      if (mode == OPCODE) {
+        // TODO: change 8 to look-ahead-max.
+        for (unsigned int level = 0; level < 8; ++level) {
+          // TODO: change to INT_MIN or some other value.
+          int bestScore = -100000;
+          bool equal_score = false;
+          for (auto candidate : bestCandidates) {
+            int score = getLAScore(last, candidate, level);
+            if (score > bestScore) {
+              best = candidate;
+              bestScore = score;
+            } else if (score == bestScore) {
+              equal_score = true;
+            }
+          }
+          if (!equal_score) {
+            break;
+          }
+        }
+      }
+      break;
+    case SPLAT:
+      for (auto v : candidates) {
+        if (v == last) {
+          best = v;
+          break;
+        }
+      }
+      break;
+    case FAILED:
+      best = NULL; break;
+  }
+  if (best) candidates.erase(best);
+}
+
+bool BoUpSLP::LSLPareConsecutiveOrMatch(Value *last, Value *candidate) {
+  if (isa<Constant>(last) && isa<Constant>(candidate)) return true;
+  if (isa<LoadInst>(last) && isa<LoadInst>(candidate)) {
+    return isConsecutiveAccess(last, candidate, *DL, *SE);
+  }
+  if (auto i_last = dyn_cast<Instruction>(last)) {
+    if (auto i_candidate = dyn_cast<Instruction>(candidate)) {
+      if (i_last->getOpcode() == i_candidate->getOpcode()) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
                             int UserTreeIdx) {
   assert((allConstant(VL) || allSameType(VL)) && "Invalid types!");
@@ -1767,6 +1901,8 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
       // Sort operands of the instructions so that each side is more likely to
       // have the same opcode.
       if (isa<BinaryOperator>(VL0) && VL0->isCommutative()) {
+        ArrayRef<ArrayRef<Value*>> multinode;
+        LSLPgetSameOpcode(VL, multinode);
         ValueList Left, Right;
         reorderInputsAccordingToOpcode(S.getOpcode(), VL, Left, Right);
         buildTree_rec(Left, Depth + 1, UserTreeIdx);
