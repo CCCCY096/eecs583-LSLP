@@ -629,6 +629,10 @@ private:
 
   int getLAScore(Value* val1, Value* val2, int max_level);
 
+  void LSLPgetSameOpcode(ArrayRef<Value*> VL, SmallVector<SmallPtrSet<Value*, 16>, 16> &multinode, SmallVector<SmallVector<Value*, 16>, 16> &commutativeOperands);
+
+  void LSLPgetSameOpcodeForEach(Value *V, Instruction *VBase, SmallPtrSet<Value*, 16> &Node, SmallVector<Value*, 16> &Operands);
+
   enum LSLPmode {
       CONST,
       LOAD,
@@ -1533,6 +1537,31 @@ bool BoUpSLP::LSLPareConsecutiveOrMatch(Value *last, Value *candidate) {
   return false;
 }
 
+void BoUpSLP::LSLPgetSameOpcode(ArrayRef<Value*> VL, SmallVector<SmallPtrSet<Value*, 16>, 16> &multinode, SmallVector<SmallVector<Value*, 16>, 16> &commutativeOperands) {
+  int VLLen = VL.size();
+  for (int i = 0; i < VLLen; ++i) {
+    SmallPtrSet<Value *, 16> CurrNode;
+    SmallVector<Value*, 16> currOperands;
+    LSLPgetSameOpcodeForEach(VL[i], dyn_cast<Instruction>(VL[i]), CurrNode, currOperands);
+    multinode.push_back(CurrNode);
+    commutativeOperands.push_back(currOperands);
+  }
+}
+
+void BoUpSLP::LSLPgetSameOpcodeForEach(Value *V, Instruction *VBase, SmallPtrSet<Value*, 16> &Node, SmallVector<Value*, 16> &Operands) {
+  assert(VBase && "SLP: encountered a Value that is not Instruction");
+  auto I = dyn_cast<Instruction>(V);
+  if (I && I->getOpcode() == VBase->getOpcode()) {
+    Operands.push_back(V);
+    for (int i = 0, e = I->getNumOperands(); i < e; ++i) {
+      LSLPgetSameOpcodeForEach(I->getOperand(i), VBase, Node, Operands);
+    }
+  } else {
+    Node.insert(V);
+  }
+
+}
+
 //xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx//
 int BoUpSLP::getLAScore(Value* val1, Value* val2, int max_level) {
 	if (max_level == 0 || !LSLPareConsecutiveOrMatch(val1, val2)){
@@ -1918,8 +1947,6 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
       // Sort operands of the instructions so that each side is more likely to
       // have the same opcode.
       if (isa<BinaryOperator>(VL0) && VL0->isCommutative()) {
-        ArrayRef<ArrayRef<Value*>> multinode;
-        LSLPgetSameOpcode(VL, multinode);
         ValueList Left, Right;
         reorderInputsAccordingToOpcode(S.getOpcode(), VL, Left, Right);
         buildTree_rec(Left, Depth + 1, UserTreeIdx);
