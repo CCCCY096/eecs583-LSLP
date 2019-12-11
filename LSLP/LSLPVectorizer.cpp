@@ -627,6 +627,8 @@ private:
 
   bool LSLPareConsecutiveOrMatch(Value *last, Value *candidate);
 
+  int getLAScore(Value* val1, Value* val2, int max_level);
+
   enum LSLPmode {
       CONST,
       LOAD,
@@ -1530,6 +1532,18 @@ bool BoUpSLP::LSLPareConsecutiveOrMatch(Value *last, Value *candidate) {
   }
   return false;
 }
+
+//xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx//
+int BoUpSLP::getLAScore(Value* val1, Value* val2, int max_level) {
+	if max_level == 0 or !LSLPareConsecutiveOrMatch(val1, val2):
+		return (int)LSLPareConsecutiveOrMatch(val1, val2);
+	int score_sum = 0;
+	for auto *val1_op : val1->getOperandList():
+		for auto *val2_op : val2->getOperandList():
+			score_sum += getLAScore(val1_op, val2_op, max_level-1);
+	return score_sum;
+}
+//xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx//
 
 void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
                             int UserTreeIdx) {
