@@ -1564,15 +1564,19 @@ void BoUpSLP::LSLPgetSameOpcodeForEach(Value *V, Instruction *VBase, SmallPtrSet
 
 //xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx//
 int BoUpSLP::getLAScore(Value* val1, Value* val2, int max_level) {
-	if (max_level == 0 || !LSLPareConsecutiveOrMatch(val1, val2)){
+
+  auto I1 = dyn_cast<Instruction>(val1);
+  auto I2 = dyn_cast<Instruction>(val2);
+	if (max_level == 0 || (isa<Constant>(val1) && isa<Constant>(val2)) || (isa<LoadInst>(val1) && isa<LoadInst>(val2))
+	    || !I1 || !I2 || I1->getOpcode() != I2->getOpcode()) {
 		return (int)LSLPareConsecutiveOrMatch(val1, val2);
   }
-	int score_sum = 0;
-	for (auto *val1_op : val1->getOperandList()){
-		for (auto *val2_op : val2->getOperandList()){
-			score_sum += getLAScore(val1_op, val2_op, max_level-1);
-    }
-  }
+  int score_sum = 0;
+	for (unsigned int i = 0, e1 = I1->getNumOperands(); i < e1; ++i) {
+	  for (unsigned int j = 0, e2 = I2->getNumOperands(); j < e2; ++j) {
+	    score_sum += getLAScore(I1->getOperand(i), I2->getOperand(j), max_level - 1);
+	  }
+	}
 	return score_sum;
 }
 //xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx//
