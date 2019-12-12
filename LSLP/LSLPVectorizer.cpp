@@ -97,6 +97,7 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include <queue>
 
 using namespace llvm;
 using namespace llvm::PatternMatch;
@@ -632,6 +633,10 @@ private:
   void LSLPgetSameOpcode(ArrayRef<Value*> VL, SmallVector<SmallPtrSet<Value*, 16>, 16> &multinode, SmallVector<SmallVector<Value*, 16>, 16> &commutativeOperands);
 
   void LSLPgetSameOpcodeForEach(Value *V, Instruction *VBase, SmallPtrSet<Value*, 16> &Node, SmallVector<Value*, 16> &Operands);
+
+  void LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &commutativeOps,
+                           SmallVector<SmallVector<Value*, 16>, 16> &finalOrder,
+                           int& UserTreeIdx);
 
   enum LSLPmode {
       CONST,
@@ -1567,19 +1572,78 @@ int BoUpSLP::getLAScore(Value* val1, Value* val2, int max_level) {
 
   auto I1 = dyn_cast<Instruction>(val1);
   auto I2 = dyn_cast<Instruction>(val2);
-	if (max_level == 0 || (isa<Constant>(val1) && isa<Constant>(val2)) || (isa<LoadInst>(val1) && isa<LoadInst>(val2))
-	    || !I1 || !I2 || I1->getOpcode() != I2->getOpcode()) {
-		return (int)LSLPareConsecutiveOrMatch(val1, val2);
+  if (max_level == 0 || (isa<Constant>(val1) && isa<Constant>(val2)) || (isa<LoadInst>(val1) && isa<LoadInst>(val2))
+      || !I1 || !I2 || I1->getOpcode() != I2->getOpcode()) {
+    return (int)LSLPareConsecutiveOrMatch(val1, val2);
   }
   int score_sum = 0;
-	for (unsigned int i = 0, e1 = I1->getNumOperands(); i < e1; ++i) {
-	  for (unsigned int j = 0, e2 = I2->getNumOperands(); j < e2; ++j) {
-	    score_sum += getLAScore(I1->getOperand(i), I2->getOperand(j), max_level - 1);
-	  }
-	}
-	return score_sum;
+  for (unsigned int i = 0, e1 = I1->getNumOperands(); i < e1; ++i) {
+    for (unsigned int j = 0, e2 = I2->getNumOperands(); j < e2; ++j) {
+      score_sum += getLAScore(I1->getOperand(i), I2->getOperand(j), max_level - 1);
+    }
+  }
+  return score_sum;
 }
 //xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx//
+
+/// Restructure the tree given some commutative operations and the reordered
+/// operands.
+void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &commutativeOps,
+                                  SmallVector<SmallVector<Value*, 16>, 16> &finalOrder,
+                                  int& UserTreeIdx) {
+  size_t numLane = commutativeOps.size(),
+         numOperands = finalOrder.front().size(),
+         numOps = commutativeOps.front().size();
+         
+  SmallVector<std::queue<Instruction*>, 16> opsQueueVec(numLane);
+
+  // Push the first value of every lane (i.e. the root) into the queue
+  for (int lane = 0; lane < numLane; ++lane) {
+    opsQueueVec[lane].push(cast<Instruction>(commutativeOps[lane].front()));
+  }
+
+  // Use BFS to construct a balanced tree
+  SmallVector<int, 16> currOpIdxs(numLane, 1),
+                       currOperandIdxs(numLane, 0);
+
+  while (!opsQueueVec.front().empty()) {
+    SmallVector<Value*, 16> VL;
+
+    for (int lane = 0; lane < numLane; ++lane) {
+
+      Instruction *currInst = opsQueueVec[lane].front();
+      opsQueueVec[lane].pop();
+
+      VL.push_back(currInst);
+
+      // Assume operations are binary
+      // 2: LHS and RHS
+      for (int i = 0; i < 2; ++i) {
+        if (currOpIdxs[lane] < numOps) {
+          Instruction *newInst = cast<Instruction>(commutativeOps[lane][currOpIdxs[lane]]);
+          currInst->setOperand(i, newInst);
+          opsQueueVec[lane].push(newInst);
+          ++currOpIdxs[lane];
+        }
+        else {
+          assert(currOperandIdxs[lane] < numOperands && "No more operands.");
+
+          currInst->setOperand(i, finalOrder[lane][currOperandIdxs[lane]]);
+          ++currOperandIdxs[lane];
+        }
+      }
+    }
+
+    // Now, we have restructure nodes at the same location from
+    // all lanes, so we can add new tree entry.
+    newTreeEntry(VL, true, UserTreeIdx);
+  }
+
+  // There should be no more operands left
+  for (int lane = 0; lane < numLane; ++lane) {
+    assert(currOperandIdxs[lane] == numOperands && "Extra operands.");
+  }
+}
 
 void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
                             int UserTreeIdx) {
