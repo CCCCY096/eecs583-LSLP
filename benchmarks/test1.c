@@ -1,19 +1,23 @@
 #include <stdio.h>
 
-const long long n = 5000;
+const long long n = 40000000;
 long A[n];
 long B[n];
 long C[n];
+long D[n];
+long E[n];
+// long F[n];
+// long G[n];
+// long H[n];
+// long I[n];
 
 // test1: SLP can vectorize
 int main() {
-    for (int j = 0; j < 1000000; ++j) {
-        for (long long i = 0; i < n-2; i=i+2) {
-          A[i+0] = B[i+0] + (C[i+0]+3);
-          A[i+1] = (C[i+1]-4) + B[i+1];
-        }
+    for (long long i = 0; i < n-2; i=i+2) {
+        A[i+0] = B[i+0] + (D[i+0] << E[i+0]);
+        A[i+1] = (D[i+1] << E[i+1]) + B[i+1];
     }
 
-    printf("%ld %ld %ld\n", A[1000], B[1000], C[1000]);
-    return 0;
+    // printf("%ld %ld %ld\n", A[1000], B[1000], C[1000]);
+    return  A[1000]+ B[1000]+ C[1000];
 }

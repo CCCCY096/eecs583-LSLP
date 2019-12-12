@@ -9,26 +9,8 @@ long C[n] = {1};
 long D[n] = {1};
 long E[n] = {1};
 
-void init(long *a) {
-    for (int i = 0; i < n ; ++i) {
-        a[i] = i;
-    }
-}
-
-long verify(long *a) {
-    int total = 0;
-    for (int i = 0; i < n; ++i) {
-      total += a[i];
-    }
-    return total;
-}
 
 int main() {
-    init(A);
-    init(B);
-    init(C);
-    init(D);
-    init(E);
     for (int j = 0; j < 100000; ++j) {
         for (long i = 0; i < n-2; i= i+2) {
           A[i+0] = A[i+0] & (B[i+0] + C[i+0]) & (D[i+0] + E[i+0]);
@@ -36,11 +18,6 @@ int main() {
         }
     }
 
-    printf("%ld \n", verify(A));
-    printf("%ld \n", verify(B));
-    printf("%ld \n", verify(C));
-    printf("%ld \n", verify(D));
-    printf("%ld \n", verify(E));
-
-
+    printf("%ld \n", A[1000]);
+    return 0;
 }
