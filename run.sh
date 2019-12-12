@@ -38,5 +38,9 @@ echo -e "3. Performance of LSLP optimized code"
 time ./${1}_lslp > /dev/null
 echo -e "\n\n"
 
+# llvm-dis ${1}.bc
+# llvm-dis ${1}.slp.bc
+# llvm-dis ${1}.lslp.bc
+
 # remove temp files
-rm -f default.profraw ${1}_lslp ${1}_no_lslp *.bc *_output?
+rm -f default.profraw ${1}_lslp ${1}_no_lslp ${1}_slp *.bc *_output?
