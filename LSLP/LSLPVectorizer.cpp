@@ -492,8 +492,6 @@ public:
           const DataLayout *DL, OptimizationRemarkEmitter *ORE)
       : F(Func), SE(Se), TTI(Tti), TLI(TLi), AA(Aa), LI(Li), DT(Dt), AC(AC),
         DB(DB), DL(DL), ORE(ORE), Builder(Se->getContext()) {
-    // Func->viewCFG();
-    // cout << "viewCFG" << endl;
       CodeMetrics::collectEphemeralValues(F, AC, EphValues);
     // Use the vector register size specified by the target unless overridden
     // by a command-line option.
@@ -619,7 +617,7 @@ private:
   int getEntryCost(TreeEntry *E);
 
   /// This is the recursive part of buildTree.
-  void buildTree_rec(ArrayRef<Value *> Roots, unsigned Depth, int);
+  void buildTree_rec(ArrayRef<Value *> Roots, unsigned Depth, int, bool buildNodeOnly);
 
 
   void LSLPreorderOperands(SmallVector<SmallPtrSet<Value*, 16>, 16> &operandVec, SmallVector<SmallVector<Value*, 16>, 16> &finalOrder);
@@ -636,8 +634,7 @@ private:
 
   void LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &commutativeOps,
                            SmallVector<SmallVector<Value*, 16>, 16> &finalOrder,
-                           int& UserTreeIdx);
-  void LSLPscheduleNewEntry(SmallVector<Value*, 16> &VL, int &UserTreeIdx);
+                           int& UserTreeIdx, unsigned Depth);
 
   enum LSLPmode {
       CONST,
@@ -1363,7 +1360,7 @@ void BoUpSLP::buildTree(ArrayRef<Value *> Roots,
   UserIgnoreList = UserIgnoreLst;
   if (!allSameType(Roots))
     return;
-  buildTree_rec(Roots, 0, -1);
+  buildTree_rec(Roots, 0, -1, false);
 
   // Collect the values that we need to extract from the tree.
   for (TreeEntry &EIdx : VectorizableTree) {
@@ -1591,7 +1588,7 @@ int BoUpSLP::getLAScore(Value* val1, Value* val2, int max_level) {
 /// operands.
 void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &commutativeOps,
                                   SmallVector<SmallVector<Value*, 16>, 16> &finalOrder,
-                                  int& UserTreeIdx) {
+                                  int& UserTreeIdx, unsigned Depth) {
   size_t numLane = commutativeOps.size(),
          numOperands = finalOrder.front().size(),
          numOps = commutativeOps.front().size();
@@ -1641,8 +1638,7 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
       newTreeEntry(VL, true, UserTreeIdx);
       hit = true;
     } else {
-      LSLPscheduleNewEntry(VL, UserTreeIdx);
-      newTreeEntry(VL, true, UserTreeIdx);
+      buildTree_rec(VL, Depth + 1, UserTreeIdx, true);
     }
 
   }
@@ -1653,63 +1649,9 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
   }
 }
 
-
-void BoUpSLP::LSLPscheduleNewEntry(SmallVector<Value*, 16> &VL, int &UserTreeIdx) {
-  InstructionsState S = getSameOpcode(VL);
-  auto *VL0 = cast<Instruction>(S.OpValue);
-  BasicBlock *BB = VL0->getParent();
-
-  if (!DT->isReachableFromEntry(BB)) {
-    // Don't go into unreachable blocks. They may contain instructions with
-    // dependency cycles which confuse the final scheduling.
-    LLVM_DEBUG(dbgs() << "SLP: bundle in unreachable block.\n");
-    newTreeEntry(VL, false, UserTreeIdx);
-    return;
-  }
-
-  // Check that every instruction appears once in this bundle.
-  SmallVector<unsigned, 4> ReuseShuffleIndicies;
-  SmallVector<Value *, 16> UniqueValues;
-  DenseMap<Value *, unsigned> UniquePositions;
-  for (Value *V : VL) {
-    auto Res = UniquePositions.try_emplace(V, UniqueValues.size());
-    ReuseShuffleIndicies.emplace_back(Res.first->second);
-    if (Res.second)
-      UniqueValues.emplace_back(V);
-  }
-  if (UniqueValues.size() == VL.size()) {
-    ReuseShuffleIndicies.clear();
-  } else {
-    LLVM_DEBUG(dbgs() << "SLP: Shuffle for reused scalars.\n");
-    if (UniqueValues.size() <= 1 || !llvm::isPowerOf2_32(UniqueValues.size())) {
-      LLVM_DEBUG(dbgs() << "SLP: Scalar used twice in bundle.\n");
-      newTreeEntry(VL, false, UserTreeIdx);
-      return;
-    }
-    VL = UniqueValues;
-  }
-
-  auto &BSRef = BlocksSchedules[BB];
-  if (!BSRef)
-    BSRef = llvm::make_unique<BlockScheduling>(BB);
-
-  BlockScheduling &BS = *BSRef.get();
-
-  if (!BS.tryScheduleBundle(VL, this, S)) {
-    LLVM_DEBUG(dbgs() << "SLP: We are not able to schedule this bundle!\n");
-    assert((!BS.getScheduleData(VL0) ||
-            !BS.getScheduleData(VL0)->isPartOfBundle()) &&
-           "tryScheduleBundle should cancelScheduling on failure");
-    newTreeEntry(VL, false, UserTreeIdx, ReuseShuffleIndicies);
-    return;
-  }
-  LLVM_DEBUG(dbgs() << "SLP: We are able to schedule this bundle.\n");
-}
-
 void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
-                            int UserTreeIdx) {
+                            int UserTreeIdx, bool buildNodeOnly) {
   assert((allConstant(VL) || allSameType(VL)) && "Invalid types!");
-
   InstructionsState S = getSameOpcode(VL);
   if (Depth == RecursionMaxDepth) {
     LLVM_DEBUG(dbgs() << "SLP: Gathering due to max recursion depth.\n");
@@ -1842,16 +1784,6 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
   }
   LLVM_DEBUG(dbgs() << "SLP: We are able to schedule this bundle.\n");
 
-
-
-
-
-
-
-
-
-
-
   unsigned ShuffleOrOp = S.isAltShuffle() ?
                 (unsigned) Instruction::ShuffleVector : S.getOpcode();
   switch (ShuffleOrOp) {
@@ -1882,8 +1814,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         for (Value *j : VL)
           Operands.push_back(cast<PHINode>(j)->getIncomingValueForBlock(
               PH->getIncomingBlock(i)));
-
-        buildTree_rec(Operands, Depth + 1, UserTreeIdx);
+        if (!buildNodeOnly) buildTree_rec(Operands, Depth + 1, UserTreeIdx, false);
       }
       return;
     }
@@ -2026,8 +1957,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         // Prepare the operand vector.
         for (Value *j : VL)
           Operands.push_back(cast<Instruction>(j)->getOperand(i));
-
-        buildTree_rec(Operands, Depth + 1, UserTreeIdx);
+        if (!buildNodeOnly) buildTree_rec(Operands, Depth + 1, UserTreeIdx, false);
       }
       return;
     }
@@ -2056,8 +1986,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         // Prepare the operand vector.
         for (Value *j : VL)
           Operands.push_back(cast<Instruction>(j)->getOperand(i));
-
-        buildTree_rec(Operands, Depth + 1, UserTreeIdx);
+        if (!buildNodeOnly) buildTree_rec(Operands, Depth + 1, UserTreeIdx, false);
       }
       return;
     }
@@ -2085,7 +2014,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
 
       // Sort operands of the instructions so that each side is more likely to
       // have the same opcode.
-      if (isa<BinaryOperator>(VL0) && VL0->isCommutative()) {
+      if (!buildNodeOnly && isa<BinaryOperator>(VL0) && VL0->isCommutative()) {
         SmallVector<SmallPtrSet<Value*, 16>, 16> multiNode;
         SmallVector<SmallVector<Value*, 16>, 16> commutativeOps;
         LSLPgetSameOpcode(VL, multiNode, commutativeOps);
@@ -2093,7 +2022,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         LSLPreorderOperands(multiNode, finalOrder);
 
         // Restructure the tree
-        LSLPrestructureTree(commutativeOps, finalOrder, UserTreeIdx);
+        LSLPrestructureTree(commutativeOps, finalOrder, UserTreeIdx, Depth);
 
         // Recursively call buildTree_rec on the operands.
         for (size_t operandIdx = 0, numOperands = finalOrder.front().size(); operandIdx < numOperands; ++operandIdx) {
@@ -2101,7 +2030,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
           for (size_t lane = 0, numLane = commutativeOps.size(); lane < numLane; ++lane) {
             VL.push_back(finalOrder[lane][operandIdx]);
           }
-          buildTree_rec(VL, Depth + 1, UserTreeIdx);
+          buildTree_rec(VL, Depth + 1, UserTreeIdx, false);
         }
         return;
       }
@@ -2111,8 +2040,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         // Prepare the operand vector.
         for (Value *j : VL)
           Operands.push_back(cast<Instruction>(j)->getOperand(i));
-
-        buildTree_rec(Operands, Depth + 1, UserTreeIdx);
+        if (!buildNodeOnly) buildTree_rec(Operands, Depth + 1, UserTreeIdx, false);
       }
       return;
 
@@ -2160,8 +2088,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         // Prepare the operand vector.
         for (Value *j : VL)
           Operands.push_back(cast<Instruction>(j)->getOperand(i));
-
-        buildTree_rec(Operands, Depth + 1, UserTreeIdx);
+        if (!buildNodeOnly) buildTree_rec(Operands, Depth + 1, UserTreeIdx, false);
       }
       return;
     }
@@ -2182,7 +2109,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
       for (Value *j : VL)
         Operands.push_back(cast<Instruction>(j)->getOperand(0));
 
-      buildTree_rec(Operands, Depth + 1, UserTreeIdx);
+      if (!buildNodeOnly) buildTree_rec(Operands, Depth + 1, UserTreeIdx, false);
       return;
     }
     case Instruction::Call: {
@@ -2198,8 +2125,6 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         return;
       }
       Function *Int = CI->getCalledFunction();
-      // Int->viewCFG();
-      // cout << "viewCFG" << endl;
       Value *A1I = nullptr;
       if (hasVectorInstrinsicScalarOpd(ID, 1))
         A1I = CI->getArgOperand(1);
@@ -2247,7 +2172,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
           CallInst *CI2 = dyn_cast<CallInst>(j);
           Operands.push_back(CI2->getArgOperand(i));
         }
-        buildTree_rec(Operands, Depth + 1, UserTreeIdx);
+        if (!buildNodeOnly) buildTree_rec(Operands, Depth + 1, UserTreeIdx, false);
       }
       return;
     }
@@ -2267,8 +2192,10 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
       if (isa<BinaryOperator>(VL0)) {
         ValueList Left, Right;
         reorderAltShuffleOperands(S, VL, Left, Right);
-        buildTree_rec(Left, Depth + 1, UserTreeIdx);
-        buildTree_rec(Right, Depth + 1, UserTreeIdx);
+        if (!buildNodeOnly) {
+          buildTree_rec(Left, Depth + 1, UserTreeIdx, false);
+          buildTree_rec(Right, Depth + 1, UserTreeIdx, false);
+        }
         return;
       }
 
@@ -2278,7 +2205,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         for (Value *j : VL)
           Operands.push_back(cast<Instruction>(j)->getOperand(i));
 
-        buildTree_rec(Operands, Depth + 1, UserTreeIdx);
+        if (!buildNodeOnly) buildTree_rec(Operands, Depth + 1, UserTreeIdx, false);
       }
       return;
 
@@ -4875,8 +4802,6 @@ struct SLPVectorizer : public FunctionPass {
   }
 
   bool runOnFunction(Function &F) override {
-    cout << "RUNONFUNCTION." << endl;
-    // F.viewCFG();
     if (skipFunction(F))
       return false;
 
