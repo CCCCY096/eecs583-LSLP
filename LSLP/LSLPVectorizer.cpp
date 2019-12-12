@@ -2017,8 +2017,18 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
       if (isa<BinaryOperator>(VL0) && VL0->isCommutative()) {
         ValueList Left, Right;
         reorderInputsAccordingToOpcode(S.getOpcode(), VL, Left, Right);
-        buildTree_rec(Left, Depth + 1, UserTreeIdx);
-        buildTree_rec(Right, Depth + 1, UserTreeIdx);
+
+        // Restructure the tree
+        LSLPrestructureTree(commutativeOps, finalOrder, UserTreeIdx);
+
+        // Recursively call buildTree_rec on the operands.
+        for (int operandIdx = 0, size_t numOperands = finalOrder.front().size(); operandIdx < numOperands; ++operandIdx) {
+          SmallVector<Value*, 16> VL;
+          for (int lane = 0, size_t numLane = commutativeOps.size(); lane < numLane; ++lane) {
+            VL.push_back(finalOrder[lane][operandIdx]);
+          }
+          buildTree_rec(VL, Depth + 1, UserTreeIdx);
+        }
         return;
       }
 
