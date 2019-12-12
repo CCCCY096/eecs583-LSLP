@@ -3,26 +3,38 @@
 ### run script project directory. 
 ### usage: ./run.sh test1
 
-PATH_MYPASS=~/eecs583-LSLP/build/LSLP/LSLPPass.so  ### Action Required: Specify the path to your pass ###
+PATH_MYPASS=build/LSLP/LSLPPass.dylib  ### Action Required: Specify the path to your pass ###
 NAME_MYPASS=-LSLPPass                           ### Action Required: Specify the name for your pass ###
 BENCH=benchmarks/${1}.c
 INPUT=${2}
+CLANG=/usr/local/opt/llvm@8/bin/clang
+OPT=/usr/local/opt/llvm@8/bin/opt
 
 
 # Disable loop vectorizer: clang -fno-vectorize file.c
 # Disable slp: clang -fno-slp-vectorize file.c
-clang -O3 -fno-vectorize -fno-slp-vectorize -emit-llvm -c ${BENCH} -o ${1}.bc
+${CLANG} -O3 -fno-vectorize -fno-slp-vectorize -emit-llvm -c ${BENCH} -o ${1}.bc
 
-opt -o ${1}.lslp.bc -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
+${OPT} -o ${1}.lslp.bc -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
 
-clang ${1}.bc -o ${1}_no_lslp
-clang ${1}.lslp.bc -o ${1}_lslp
+${CLANG} ${1}.bc -o ${1}_no_lslp
+${CLANG} ${1}.lslp.bc -o ${1}_lslp
+
+
+${CLANG} -O3 -fno-vectorize -emit-llvm -c ${BENCH} -o ${1}slp_enable.bc
+${CLANG} ${1}slp_enable.bc -o ${1}_slp
+
 
 
 echo -e "1. Performance of unoptimized code"
 time ./${1}_no_lslp > /dev/null
 echo -e "\n\n"
-echo -e "2. Performance of optimized code"
+
+echo -e "2. Performance of SLP optimized code"
+time ./${1}_slp > /dev/null
+echo -e "\n\n"
+
+echo -e "3. Performance of LSLP optimized code"
 time ./${1}_lslp > /dev/null
 echo -e "\n\n"
 
