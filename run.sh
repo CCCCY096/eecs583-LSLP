@@ -15,7 +15,7 @@ OPT=/usr/local/opt/llvm@8/bin/opt
 # Disable slp: clang -fno-slp-vectorize file.c
 ${CLANG} -O3 -fno-vectorize -fno-slp-vectorize -emit-llvm -c ${BENCH} -o ${1}.bc
 
-${OPT} -o ${1}.lslp.bc -load ${PATH_MYPASS} ${NAME_MYPASS} < ${1}.bc > /dev/null
+${OPT} -o ${1}.lslp.bc -load ${PATH_MYPASS} ${NAME_MYPASS} -view-lslp-tree < ${1}.bc > /dev/null
 
 ${CLANG} ${1}.bc -o ${1}_no_lslp
 ${CLANG} ${1}.lslp.bc -o ${1}_lslp

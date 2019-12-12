@@ -637,6 +637,7 @@ private:
   void LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &commutativeOps,
                            SmallVector<SmallVector<Value*, 16>, 16> &finalOrder,
                            int& UserTreeIdx);
+  void LSLPscheduleNewEntry(SmallVector<Value*, 16> &VL, int &UserTreeIdx);
 
   enum LSLPmode {
       CONST,
@@ -1605,7 +1606,7 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
   // Use BFS to construct a balanced tree
   SmallVector<int, 16> currOpIdxs(numLane, 1),
                        currOperandIdxs(numLane, 0);
-
+  bool hit = false;
   while (!opsQueueVec.front().empty()) {
     SmallVector<Value*, 16> VL;
 
@@ -1636,13 +1637,73 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
 
     // Now, we have restructure nodes at the same location from
     // all lanes, so we can add new tree entry.
-    newTreeEntry(VL, true, UserTreeIdx);
+    if (!hit) {
+      newTreeEntry(VL, true, UserTreeIdx);
+      hit = true;
+    } else {
+      LSLPscheduleNewEntry(VL, UserTreeIdx);
+      newTreeEntry(VL, true, UserTreeIdx);
+    }
+
   }
 
   // There should be no more operands left
   for (int lane = 0; lane < numLane; ++lane) {
     assert(currOperandIdxs[lane] == numOperands && "Extra operands.");
   }
+}
+
+
+void BoUpSLP::LSLPscheduleNewEntry(SmallVector<Value*, 16> &VL, int &UserTreeIdx) {
+  InstructionsState S = getSameOpcode(VL);
+  auto *VL0 = cast<Instruction>(S.OpValue);
+  BasicBlock *BB = VL0->getParent();
+
+  if (!DT->isReachableFromEntry(BB)) {
+    // Don't go into unreachable blocks. They may contain instructions with
+    // dependency cycles which confuse the final scheduling.
+    LLVM_DEBUG(dbgs() << "SLP: bundle in unreachable block.\n");
+    newTreeEntry(VL, false, UserTreeIdx);
+    return;
+  }
+
+  // Check that every instruction appears once in this bundle.
+  SmallVector<unsigned, 4> ReuseShuffleIndicies;
+  SmallVector<Value *, 16> UniqueValues;
+  DenseMap<Value *, unsigned> UniquePositions;
+  for (Value *V : VL) {
+    auto Res = UniquePositions.try_emplace(V, UniqueValues.size());
+    ReuseShuffleIndicies.emplace_back(Res.first->second);
+    if (Res.second)
+      UniqueValues.emplace_back(V);
+  }
+  if (UniqueValues.size() == VL.size()) {
+    ReuseShuffleIndicies.clear();
+  } else {
+    LLVM_DEBUG(dbgs() << "SLP: Shuffle for reused scalars.\n");
+    if (UniqueValues.size() <= 1 || !llvm::isPowerOf2_32(UniqueValues.size())) {
+      LLVM_DEBUG(dbgs() << "SLP: Scalar used twice in bundle.\n");
+      newTreeEntry(VL, false, UserTreeIdx);
+      return;
+    }
+    VL = UniqueValues;
+  }
+
+  auto &BSRef = BlocksSchedules[BB];
+  if (!BSRef)
+    BSRef = llvm::make_unique<BlockScheduling>(BB);
+
+  BlockScheduling &BS = *BSRef.get();
+
+  if (!BS.tryScheduleBundle(VL, this, S)) {
+    LLVM_DEBUG(dbgs() << "SLP: We are not able to schedule this bundle!\n");
+    assert((!BS.getScheduleData(VL0) ||
+            !BS.getScheduleData(VL0)->isPartOfBundle()) &&
+           "tryScheduleBundle should cancelScheduling on failure");
+    newTreeEntry(VL, false, UserTreeIdx, ReuseShuffleIndicies);
+    return;
+  }
+  LLVM_DEBUG(dbgs() << "SLP: We are able to schedule this bundle.\n");
 }
 
 void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
@@ -1780,6 +1841,16 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
     return;
   }
   LLVM_DEBUG(dbgs() << "SLP: We are able to schedule this bundle.\n");
+
+
+
+
+
+
+
+
+
+
 
   unsigned ShuffleOrOp = S.isAltShuffle() ?
                 (unsigned) Instruction::ShuffleVector : S.getOpcode();
@@ -2009,7 +2080,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
     case Instruction::And:
     case Instruction::Or:
     case Instruction::Xor:
-      newTreeEntry(VL, true, UserTreeIdx, ReuseShuffleIndicies);
+
       LLVM_DEBUG(dbgs() << "SLP: added a vector of bin op.\n");
 
       // Sort operands of the instructions so that each side is more likely to
@@ -2034,7 +2105,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         }
         return;
       }
-
+      newTreeEntry(VL, true, UserTreeIdx, ReuseShuffleIndicies);
       for (unsigned i = 0, e = VL0->getNumOperands(); i < e; ++i) {
         ValueList Operands;
         // Prepare the operand vector.
