@@ -634,6 +634,7 @@ private:
 
   void LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &commutativeOps,
                            SmallVector<SmallVector<Value*, 16>, 16> &finalOrder,
+                           SmallVector<int, 16> &opsIdxVec,
                            int& UserTreeIdx, unsigned Depth);
 
   enum LSLPmode {
@@ -1588,6 +1589,7 @@ int BoUpSLP::getLAScore(Value* val1, Value* val2, int max_level) {
 /// operands.
 void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &commutativeOps,
                                   SmallVector<SmallVector<Value*, 16>, 16> &finalOrder,
+                                  SmallVector<int, 16> &opsIdxVec,
                                   int& UserTreeIdx, unsigned Depth) {
   size_t numLane = commutativeOps.size(),
          numOperands = finalOrder.front().size(),
@@ -1608,11 +1610,26 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
     SmallVector<Value*, 16> VL;
 
     for (int lane = 0; lane < numLane; ++lane) {
+      Instruction *currInst = opsQueueVec[lane].front();
+      VL.push_back(currInst);
+    }
+
+    // Add new tree entry.
+    int tempIdx = getTreeSize();
+    if (!hit) {
+      newTreeEntry(VL, true, UserTreeIdx);
+      hit = true;
+    } else {
+      buildTree_rec(VL, Depth + 1, UserTreeIdx, true);
+      // Update UserTreeIdx
+      assert(tempIdx + 1 == getTreeSize() && "Assumption not hold.");
+      UserTreeIdx = tempIdx;
+    }
+
+    for (int lane = 0; lane < numLane; ++lane) {
 
       Instruction *currInst = opsQueueVec[lane].front();
       opsQueueVec[lane].pop();
-
-      VL.push_back(currInst);
 
       // Assume operations are binary
       // 2: LHS and RHS
@@ -1628,20 +1645,16 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
 
           currInst->setOperand(i, finalOrder[lane][currOperandIdxs[lane]]);
           ++currOperandIdxs[lane];
+          if (lane == 0) {
+            opsIdxVec.push_back(UserTreeIdx);
+          }
         }
       }
     }
 
-    // Now, we have restructure nodes at the same location from
-    // all lanes, so we can add new tree entry.
-    if (!hit) {
-      newTreeEntry(VL, true, UserTreeIdx);
-      hit = true;
-    } else {
-      buildTree_rec(VL, Depth + 1, UserTreeIdx, true);
-    }
-
   }
+
+  assert(numOperands == opsIdxVec.size() && "Number of Idxs not correct.");
 
   // There should be no more operands left
   for (int lane = 0; lane < numLane; ++lane) {
@@ -2022,7 +2035,8 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
         LSLPreorderOperands(multiNode, finalOrder);
 
         // Restructure the tree
-        LSLPrestructureTree(commutativeOps, finalOrder, UserTreeIdx, Depth);
+        SmallVector<int, 16> opsIdxVec;
+        LSLPrestructureTree(commutativeOps, finalOrder, opsIdxVec, UserTreeIdx, Depth);
 
         // Recursively call buildTree_rec on the operands.
         for (size_t operandIdx = 0, numOperands = finalOrder.front().size(); operandIdx < numOperands; ++operandIdx) {
@@ -2030,7 +2044,7 @@ void BoUpSLP::buildTree_rec(ArrayRef<Value *> VL, unsigned Depth,
           for (size_t lane = 0, numLane = commutativeOps.size(); lane < numLane; ++lane) {
             VL.push_back(finalOrder[lane][operandIdx]);
           }
-          buildTree_rec(VL, Depth + 1, UserTreeIdx, false);
+          buildTree_rec(VL, Depth + 1, opsIdxVec[operandIdx], false);
         }
         return;
       }
@@ -2869,7 +2883,7 @@ int BoUpSLP::getTreeCost() {
   LLVM_DEBUG(dbgs() << Str);
 
   if (ViewSLPTree)
-    ViewGraph(this, "SLP" + F->getName(), false, Str);
+    llvm::WriteGraph(this, "SLP" + F->getName(), false, Str);
 
   return Cost;
 }
