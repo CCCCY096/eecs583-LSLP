@@ -1596,6 +1596,9 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
          numOps = commutativeOps.front().size();
          
   SmallVector<std::queue<Instruction*>, 16> opsQueueVec(numLane);
+  SmallVector<int, 16> parentIdxVec;
+
+  parentIdxVec.push_back(UserTreeIdx);
 
   // Push the first value of every lane (i.e. the root) into the queue
   for (int lane = 0; lane < numLane; ++lane) {
@@ -1606,6 +1609,8 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
   SmallVector<int, 16> currOpIdxs(numLane, 1),
                        currOperandIdxs(numLane, 0);
   bool hit = false;
+
+  int opIdx = 0;
   while (!opsQueueVec.front().empty()) {
     SmallVector<Value*, 16> VL;
 
@@ -1620,7 +1625,7 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
       newTreeEntry(VL, true, UserTreeIdx);
       hit = true;
     } else {
-      buildTree_rec(VL, Depth + 1, UserTreeIdx, true);
+      buildTree_rec(VL, Depth + 1, parentIdxVec[opIdx], true);
       // Update UserTreeIdx
       assert(tempIdx + 1 == getTreeSize() && "Assumption not hold.");
       UserTreeIdx = tempIdx;
@@ -1639,6 +1644,10 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
           currInst->setOperand(i, newInst);
           opsQueueVec[lane].push(newInst);
           ++currOpIdxs[lane];
+
+          if (lane == 0) {
+            parentIdxVec.push_back(UserTreeIdx);
+          }
         }
         else {
           assert(currOperandIdxs[lane] < numOperands && "No more operands.");
@@ -1651,7 +1660,7 @@ void BoUpSLP::LSLPrestructureTree(SmallVector<SmallVector<Value*, 16>, 16> &comm
         }
       }
     }
-
+    ++opIdx;
   }
 
   assert(numOperands == opsIdxVec.size() && "Number of Idxs not correct.");
