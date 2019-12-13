@@ -13,7 +13,7 @@ void init(long *arr) {
     }
 }
 
-void verify(long *arr) {
+__attribute__((optnone)) void verify(long *arr) {
     long total = 0;
     for (int i = 0; i < n; ++i) {
         total += arr[i];
