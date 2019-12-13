@@ -1,4 +1,4 @@
-#include <stdio.h>
+// #include <stdio.h>
 
 const long long n = 40000000;
 long A[n];
@@ -6,10 +6,6 @@ long B[n];
 long C[n];
 long D[n];
 long E[n];
-// long F[n];
-// long G[n];
-// long H[n];
-// long I[n];
 
 // test1: SLP can vectorize
 int main() {

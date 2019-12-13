@@ -1,5 +1,5 @@
 // test2: SLP fails. Load Address Mismatch.
-#include <stdio.h>
+// #include <stdio.h>
 
 const int n = 5000;
 long A[n] = {0};
@@ -16,6 +16,6 @@ int main() {
             A[i+1] = (C[i+1] << E[i+1]) & (B[i+1] << D[i+1]);
         }
     }
-    printf("%ld %ld %ld\n", A[1000], B[1000], C[1000]);
+    // printf("%ld %ld %ld\n", A[1000], B[1000], C[1000]);
     return 0;
 }

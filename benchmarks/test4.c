@@ -1,6 +1,6 @@
 
 // test4: SLP fails. Associativity Mismatch and Multi-Node
-#include <stdio.h>
+// #include <stdio.h>
 
 const int n = 5000;
 long A[n] = {0};
@@ -18,6 +18,6 @@ int main() {
         }
     }
 
-    printf("%ld \n", A[1000]);
+    // printf("%ld \n", A[1000]);
     return 0;
 }

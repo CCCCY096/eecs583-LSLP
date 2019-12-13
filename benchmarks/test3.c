@@ -1,6 +1,6 @@
 
 // test3: SLP fails. Opcode Mismatch
-#include <stdio.h>
+// #include <stdio.h>
 
 const int n = 5000;
 long A[n] = {0};
@@ -22,6 +22,6 @@ int main() {
           A[i+1] = ((D[2*i] + G[2*i+1]) & 0x13) + ((E[2*i] << F[2*i+1]) & 0x14);
         }
     }
-    printf("%ld %ld %ld\n", A[1000], B[1000], C[1000]);
+    // printf("%ld %ld %ld\n", A[1000], B[1000], C[1000]);
 
 }
